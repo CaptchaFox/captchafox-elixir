@@ -1,0 +1,73 @@
+name: Release
+
+# Runs when a version tag is pushed: publishes the version to Hex, then creates the GitHub release. Tags on a commit
+# that is not on main, or whose version or changelog does not match, are refused before anything is published.
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: read
+
+concurrency: release
+
+jobs:
+  publish:
+    name: Publish ${{ github.ref_name }} to Hex
+    runs-on: ubuntu-24.04
+    container: elixir:1.18.4-otp-27
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history, so that the check below can see whether the tag is on main.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check that the tag points to a commit on main
+        run: |
+          # The checkout belongs to another user than the container's root.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::${GITHUB_REF_NAME} points to $(git rev-parse --short HEAD), which is not on main. Tag the tested commit on main."
+            exit 1
+          fi
+
+      - name: Check the version in mix.exs and the changelog
+        run: .github/scripts/check-release.sh "$GITHUB_REF_NAME" "$RUNNER_TEMP/notes.md"
+
+      - name: Install Hex
+        run: mix local.hex --force
+
+      - name: Test
+        env:
+          MIX_ENV: test
+        run: mix test --warnings-as-errors
+
+      - name: Publish to Hex
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+        run: |
+          mix deps.get
+          mix hex.publish --yes
+
+  github-release:
+    name: Create the GitHub release ${{ github.ref_name }}
+    needs: publish
+    runs-on: ubuntu-24.04
+    permissions:
+      # Creates the GitHub release.
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/check-release.sh "$GITHUB_REF_NAME" "$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --title "CaptchaFox for Elixir ${GITHUB_REF_NAME#v}" \
+            --notes-file "$RUNNER_TEMP/notes.md"
