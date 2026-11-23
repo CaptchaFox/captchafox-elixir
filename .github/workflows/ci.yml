@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests (Elixir ${{ matrix.elixir }}, Erlang/OTP ${{ matrix.otp }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The first release of Erlang/OTP 27, whose :httpc starts its timeout only after the connect.
+          - { elixir: '1.18.4', otp: '27.0.1', image: 'hexpm/elixir:1.18.4-erlang-27.0.1-debian-bookworm-20260824' }
+          - { elixir: '1.18.4', otp: '27', image: 'elixir:1.18.4-otp-27' }
+          - { elixir: '1.19.7', otp: '28', image: 'elixir:1.19.7-otp-28' }
+          - { elixir: '1.20.5', otp: '29', image: 'elixir:1.20.5-otp-29' }
+    container: ${{ matrix.image }}
+    env:
+      MIX_ENV: test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Hex
+        run: mix local.hex --force
+
+      - name: Check formatting
+        run: mix format --check-formatted
+
+      - name: Compile
+        run: mix compile --warnings-as-errors
+
+      - name: Test
+        run: mix test --warnings-as-errors
